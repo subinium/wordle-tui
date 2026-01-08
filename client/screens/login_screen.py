@@ -8,8 +8,11 @@ from textual.widgets import Static, Input, Button
 from textual.containers import Vertical, Container, Horizontal
 from textual.binding import Binding
 from rich.text import Text
+from rich.panel import Panel
+from rich.align import Align
 
 from client.api_client import get_api_client
+from client.config import ClientConfig
 
 
 class LoginScreen(Screen):
@@ -24,23 +27,20 @@ class LoginScreen(Screen):
     LoginScreen {
         background: #121213;
         align: center middle;
-        overflow: hidden;
     }
 
     #login-container {
-        width: 50;
+        width: 56;
         height: auto;
         background: #1a1a1b;
         border: solid #3a3a3c;
         padding: 2;
-        overflow: hidden;
     }
 
     #login-title {
         width: 100%;
         height: 5;
         content-align: center middle;
-        overflow: hidden;
     }
 
     #login-subtitle {
@@ -48,32 +48,25 @@ class LoginScreen(Screen):
         height: 2;
         content-align: center middle;
         color: #818384;
-        overflow: hidden;
     }
 
-    #username-section {
+    #github-section {
         width: 100%;
         height: auto;
         padding: 1 0;
-        overflow: hidden;
     }
 
-    #username-input {
-        width: 100%;
-        margin-bottom: 1;
-    }
-
-    #username-button {
+    #github-button {
         width: 100%;
     }
 
-    #username-status {
+    #github-status {
         width: 100%;
-        height: 1;
+        height: auto;
+        min-height: 5;
         content-align: center middle;
-        color: #818384;
+        padding: 1;
         margin-top: 1;
-        overflow: hidden;
     }
 
     #divider {
@@ -82,20 +75,17 @@ class LoginScreen(Screen):
         content-align: center middle;
         color: #3a3a3c;
         margin: 1 0;
-        overflow: hidden;
     }
 
     #offline-section {
         width: 100%;
         height: auto;
-        overflow: hidden;
     }
 
     #offline-hint {
         width: 100%;
         height: 1;
         color: #565758;
-        overflow: hidden;
     }
 
     #offline-button {
@@ -109,7 +99,6 @@ class LoginScreen(Screen):
         content-align: center middle;
         color: #565758;
         margin-top: 2;
-        overflow: hidden;
     }
     """
 
@@ -120,6 +109,7 @@ class LoginScreen(Screen):
         self.github_available = False
         self._polling = False
         self._device_code = None
+        self._config = ClientConfig()
 
     def compose(self) -> ComposeResult:
         with Container(id="login-container"):
@@ -210,12 +200,15 @@ class LoginScreen(Screen):
             verification_uri = data["verification_uri"]
             interval = data.get("interval", 5)
 
-            # Show code to user
-            github_status.update(Text.from_markup(
-                f"[bold white]Code: {user_code}[/]\n"
-                f"[#818384]Go to: [link={verification_uri}]{verification_uri}[/link][/]\n"
+            # Show code to user - BIG and CLEAR
+            code_display = (
+                f"[bold #c9b458]━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/]\n"
+                f"[bold white]   YOUR CODE: [#6aaa64]{user_code}[/]   [/]\n"
+                f"[bold #c9b458]━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/]\n\n"
+                f"[#818384]Go to: {verification_uri}[/]\n"
                 f"[#565758]Waiting for authorization...[/]"
-            ))
+            )
+            github_status.update(Text.from_markup(code_display))
 
             # Open browser
             webbrowser.open(verification_uri)
@@ -251,6 +244,9 @@ class LoginScreen(Screen):
                 status = data.get("status")
 
                 if status == "authorized":
+                    # Save token locally for auto-login
+                    self._config.save(data["username"], data["token"])
+
                     github_status.update(Text.from_markup(
                         f"[bold #6aaa64]✓ Welcome, {data['username']}![/]"
                     ))

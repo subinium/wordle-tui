@@ -11,6 +11,7 @@ from textual.binding import Binding
 from client.screens.game_screen import GameScreen
 from client.screens.login_screen import LoginScreen
 from client.api_client import get_api_client
+from client.config import ClientConfig
 
 
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -79,12 +80,18 @@ class WordleApp(App):
         self.user_token = None
         self.streak = 0
         self.target_word = None  # Will be set based on login status
+        self._config = ClientConfig()
 
     def on_mount(self) -> None:
         if self.skip_login:
             # Skip login, use local word
             self.target_word = get_local_word()
             self._start_game()
+        elif self._config.is_authenticated:
+            # Auto-login with saved token
+            self.username = self._config.username or "Player"
+            self.user_token = self._config.token
+            asyncio.create_task(self._fetch_server_word_and_start())
         else:
             # Show login screen first
             self.push_screen(LoginScreen(api_url=API_URL), self._on_login)
