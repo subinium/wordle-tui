@@ -1,50 +1,132 @@
-"""Admin API endpoints - protected by secret key."""
+"""Admin API endpoints - protected by admin email list."""
 
 from datetime import date, timedelta
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi.responses import HTMLResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from typing import Optional
 from server.database import get_db
 from server.config import get_settings
 from server.auth.models import User
+from server.auth.service import verify_token, get_user_by_id
 from server.games.models import GameResult
 from server.streaks.models import UserStreak
 from server.words.models import DailyWord
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+def get_admin_emails() -> list[str]:
+    """Get list of admin emails from config."""
+    settings = get_settings()
+    if not settings.admin_emails:
+        return []
+    return [e.strip().lower() for e in settings.admin_emails.split(",") if e.strip()]
+
+
+async def verify_admin_token(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Verify JWT token and check if user is admin."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing authorization token")
+
+    token = authorization.replace("Bearer ", "")
+    user_id = verify_token(token)
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = await get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    admin_emails = get_admin_emails()
+    # SECURITY: Require ADMIN_EMAILS to be configured
+    if not admin_emails:
+        raise HTTPException(status_code=403, detail="Admin emails not configured")
+    if not user.email or user.email.lower() not in admin_emails:
+        raise HTTPException(status_code=403, detail="Not an admin")
+
+    return user
+
 
 def verify_admin_key(x_admin_key: str = Header(None)):
-    """Verify admin secret key."""
+    """Verify admin secret key (legacy, for API access)."""
     settings = get_settings()
     if not x_admin_key or x_admin_key != settings.admin_secret_key:
         raise HTTPException(status_code=403, detail="Invalid admin key")
     return True
 
 
+async def verify_admin(
+    authorization: Optional[str] = Header(None),
+    x_admin_key: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify either JWT token (admin email) or X-Admin-Key."""
+    # Try X-Admin-Key first (for CLI/curl access)
+    if x_admin_key:
+        settings = get_settings()
+        if x_admin_key == settings.admin_secret_key:
+            return True
+
+    # Try JWT token (for dashboard access)
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.replace("Bearer ", "")
+        user_id = verify_token(token)
+        if user_id:
+            user = await get_user_by_id(db, user_id)
+            if user:
+                admin_emails = get_admin_emails()
+                # SECURITY: Require ADMIN_EMAILS to be configured
+                if not admin_emails:
+                    raise HTTPException(status_code=403, detail="Admin emails not configured")
+                if user.email and user.email.lower() in admin_emails:
+                    return user
+
+    raise HTTPException(status_code=403, detail="Admin access required")
+
+
+@router.get("/dashboard")
+async def dashboard():
+    """Serve admin dashboard HTML."""
+    html_file = STATIC_DIR / "dashboard.html"
+    if html_file.exists():
+        return FileResponse(html_file, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Dashboard not found")
+
+
+@router.get("/me")
+async def admin_me(user: User = Depends(verify_admin_token)):
+    """Get current admin user info."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "avatar_url": user.avatar_url,
+    }
+
+
 @router.get("/stats")
 async def get_overall_stats(
     db: AsyncSession = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _=Depends(verify_admin),
 ):
     """Get overall server statistics."""
-    # Total users
     total_users = await db.scalar(select(func.count(User.id)))
-
-    # Total games played
     total_games = await db.scalar(select(func.count(GameResult.id)))
-
-    # Total games solved
     total_solved = await db.scalar(
         select(func.count(GameResult.id)).where(GameResult.solved == True)
     )
-
-    # Average attempts for solved games
     avg_attempts = await db.scalar(
         select(func.avg(GameResult.attempts)).where(GameResult.solved == True)
     )
-
-    # Active users (played in last 7 days)
     week_ago = date.today() - timedelta(days=7)
     active_users = await db.scalar(
         select(func.count(func.distinct(GameResult.user_id))).where(
@@ -52,7 +134,6 @@ async def get_overall_stats(
         )
     )
 
-    # Today's stats
     today = date.today()
     today_word = await db.scalar(select(DailyWord).where(DailyWord.date == today))
     today_games = 0
@@ -90,7 +171,7 @@ async def get_users(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _=Depends(verify_admin),
 ):
     """Get list of users with their stats."""
     result = await db.execute(
@@ -106,6 +187,7 @@ async def get_users(
         users.append({
             "id": user.id,
             "username": user.username,
+            "email": user.email,
             "google_id": user.google_id,
             "created_at": user.created_at.isoformat() if user.created_at else None,
             "total_games": streak.total_games if streak else 0,
@@ -121,7 +203,7 @@ async def get_users(
 async def get_full_leaderboard(
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _=Depends(verify_admin),
 ):
     """Get full leaderboard by streak."""
     result = await db.execute(
@@ -150,7 +232,7 @@ async def get_full_leaderboard(
 async def get_user_detail(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _=Depends(verify_admin),
 ):
     """Get detailed stats for a specific user."""
     user = await db.scalar(select(User).where(User.id == user_id))
@@ -159,7 +241,6 @@ async def get_user_detail(
 
     streak = await db.scalar(select(UserStreak).where(UserStreak.user_id == user_id))
 
-    # Get all game results for this user
     games_result = await db.execute(
         select(GameResult, DailyWord)
         .join(DailyWord, GameResult.word_id == DailyWord.id)
@@ -180,7 +261,6 @@ async def get_user_detail(
             "completed_at": game.completed_at.isoformat() if game.completed_at else None,
         })
 
-    # Attempts distribution
     distribution = {}
     for i in range(1, 7):
         count = await db.scalar(
@@ -196,6 +276,7 @@ async def get_user_detail(
         "user": {
             "id": user.id,
             "username": user.username,
+            "email": user.email,
             "google_id": user.google_id,
             "created_at": user.created_at.isoformat() if user.created_at else None,
         },
@@ -216,7 +297,7 @@ async def get_user_detail(
 async def get_daily_stats(
     target_date: date,
     db: AsyncSession = Depends(get_db),
-    _: bool = Depends(verify_admin_key),
+    _=Depends(verify_admin),
 ):
     """Get stats for a specific date."""
     word = await db.scalar(select(DailyWord).where(DailyWord.date == target_date))
@@ -240,7 +321,6 @@ async def get_daily_stats(
         )
     )
 
-    # Attempts distribution
     distribution = {}
     for i in range(1, 7):
         count = await db.scalar(

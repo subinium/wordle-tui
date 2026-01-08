@@ -56,6 +56,7 @@ async def create_or_get_google_user(
 
         user = User(
             username=username,
+            email=email,
             google_id=google_id,
             avatar_url=avatar_url,
         )
