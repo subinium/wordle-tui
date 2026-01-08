@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets & Sensitive Data (Online/Server)
+data/words_2026.json
+data/answer_words.txt
+
+# Public files (OK to commit)
+!data/valid_words.txt
+!data/words_offline.json
+!data/answer_words_offline.txt
+
+# Alembic
+alembic/versions/__pycache__/
+
+# Logs
+*.log
+
+# Local development
+.claude/

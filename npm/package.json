@@ -1,0 +1,26 @@
+{
+  "name": "tui-wordle",
+  "version": "0.1.0",
+  "description": "Beautiful terminal-based Wordle game with shared leaderboard",
+  "keywords": ["wordle", "tui", "terminal", "game", "cli"],
+  "author": "subinium",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/subinium/tui-wordle.git"
+  },
+  "bugs": {
+    "url": "https://github.com/subinium/tui-wordle/issues"
+  },
+  "homepage": "https://github.com/subinium/tui-wordle#readme",
+  "bin": {
+    "wordle": "./bin/wordle.js",
+    "tui-wordle": "./bin/wordle.js"
+  },
+  "scripts": {
+    "postinstall": "node ./scripts/postinstall.js"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
