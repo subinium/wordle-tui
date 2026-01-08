@@ -16,8 +16,8 @@ from client.api_client import get_api_client
 DATA_DIR = Path(__file__).parent.parent / "data"
 OFFLINE_WORDS_FILE = DATA_DIR / "words_offline.json"
 
-# API URL from environment or default
-API_URL = os.environ.get("WORDLE_API_URL", "http://localhost:8000")
+# API URL from environment or default (production)
+API_URL = os.environ.get("WORDLE_API_URL", "https://wordle-tui-production.up.railway.app")
 
 
 def get_local_word() -> str:

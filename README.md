@@ -21,30 +21,22 @@ Beautiful terminal-based Wordle game with shared leaderboard, streaks, and GitHu
 
 ## Installation
 
-### pip (Recommended)
+### pip
 
 ```bash
 pip install tui-wordle
 ```
 
-### curl
+### uv (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/subinium/tui-wordle/main/install.sh | bash
+uv tool install tui-wordle
 ```
 
 ### pipx
 
 ```bash
 pipx install tui-wordle
-```
-
-### npm / bun
-
-```bash
-npm install -g tui-wordle
-# or
-bun install -g tui-wordle
 ```
 
 ### From source
