@@ -146,6 +146,72 @@ async def get_full_leaderboard(
     return {"leaderboard": leaderboard}
 
 
+@router.get("/users/{user_id}")
+async def get_user_detail(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(verify_admin_key),
+):
+    """Get detailed stats for a specific user."""
+    user = await db.scalar(select(User).where(User.id == user_id))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    streak = await db.scalar(select(UserStreak).where(UserStreak.user_id == user_id))
+
+    # Get all game results for this user
+    games_result = await db.execute(
+        select(GameResult, DailyWord)
+        .join(DailyWord, GameResult.word_id == DailyWord.id)
+        .where(GameResult.user_id == user_id)
+        .order_by(GameResult.completed_at.desc())
+        .limit(100)
+    )
+
+    games = []
+    for game, word in games_result.all():
+        games.append({
+            "date": word.date.isoformat(),
+            "word": word.word,
+            "attempts": game.attempts,
+            "solved": game.solved,
+            "time_seconds": game.time_seconds,
+            "guess_history": game.guess_history,
+            "completed_at": game.completed_at.isoformat() if game.completed_at else None,
+        })
+
+    # Attempts distribution
+    distribution = {}
+    for i in range(1, 7):
+        count = await db.scalar(
+            select(func.count(GameResult.id)).where(
+                GameResult.user_id == user_id,
+                GameResult.solved == True,
+                GameResult.attempts == i
+            )
+        )
+        distribution[str(i)] = count or 0
+
+    return {
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "github_id": user.github_id,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        },
+        "stats": {
+            "total_games": streak.total_games if streak else 0,
+            "total_wins": streak.total_wins if streak else 0,
+            "win_rate": round(streak.total_wins / streak.total_games * 100, 1) if streak and streak.total_games else 0,
+            "current_streak": streak.current_streak if streak else 0,
+            "longest_streak": streak.longest_streak if streak else 0,
+            "last_played": streak.last_played.isoformat() if streak and streak.last_played else None,
+            "distribution": distribution,
+        },
+        "games": games,
+    }
+
+
 @router.get("/daily/{target_date}")
 async def get_daily_stats(
     target_date: date,
