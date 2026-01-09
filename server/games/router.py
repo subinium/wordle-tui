@@ -177,6 +177,8 @@ async def get_today_progress(
             "result": {
                 "attempts": existing_result.attempts,
                 "solved": existing_result.solved,
+                "time_seconds": existing_result.time_seconds,
+                "guess_history": existing_result.guess_history or [],
             }
         }
 

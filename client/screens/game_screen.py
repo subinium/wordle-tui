@@ -407,7 +407,12 @@ class GameScreen(Screen):
             },
             "global_stats": {},
         }
-        self.app.push_screen(ResultScreen(result_data, api_url=self.api_url))
+        self.app.push_screen(ResultScreen(
+            result_data,
+            api_url=self.api_url,
+            token=self.token,
+            email=self.email,
+        ))
 
     def action_quit(self) -> None:
         self.app.exit()

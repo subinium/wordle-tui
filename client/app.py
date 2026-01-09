@@ -174,13 +174,15 @@ class WordleApp(App):
         """Show result screen for already completed game."""
         solved = result.get("solved", False)
         attempts = result.get("attempts", 0)
+        time_seconds = result.get("time_seconds", 0)
+        guesses = result.get("guess_history", [])
 
         result_data = {
             "won": solved,
             "attempts": attempts,
             "target_word": self.target_word,
-            "time_seconds": 0,
-            "guesses": [],
+            "time_seconds": time_seconds or 0,
+            "guesses": guesses,
             "username": self.username,
             "already_played": True,
             "personal_stats": {
@@ -194,7 +196,12 @@ class WordleApp(App):
             },
             "global_stats": {},
         }
-        self.push_screen(ResultScreen(result_data, api_url=self.api_url))
+        self.push_screen(ResultScreen(
+            result_data,
+            api_url=self.api_url,
+            token=self.user_token or "",
+            email=self.user_email,
+        ))
 
     def _start_game(self) -> None:
         """Start the game screen."""

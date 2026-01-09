@@ -9,6 +9,7 @@ from textual.binding import Binding
 from rich.text import Text
 
 from client.api_client import get_api_client
+from client.screens.settings_screen import SettingsScreen
 
 
 class ResultScreen(ModalScreen):
@@ -20,8 +21,10 @@ class ResultScreen(ModalScreen):
         Binding("1", "tab_result", "Result", show=False),
         Binding("2", "tab_stats", "Stats", show=False),
         Binding("3", "tab_leaderboard", "Leaderboard", show=False),
+        Binding("4", "tab_settings", "Settings", show=False),
         Binding("left", "prev_tab", "Previous Tab", show=False),
         Binding("right", "next_tab", "Next Tab", show=False),
+        Binding("l", "logout", "Logout", show=False),
     ]
 
     CSS = """
@@ -85,10 +88,19 @@ class ResultScreen(ModalScreen):
     }
     """
 
-    def __init__(self, result_data: dict, api_url: str = "", **kwargs) -> None:
+    def __init__(
+        self,
+        result_data: dict,
+        api_url: str = "",
+        token: str = "",
+        email: str = "",
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.result_data = result_data
         self.api_url = api_url
+        self.token = token
+        self.email = email
         self.leaderboard_entries = []
 
     def compose(self) -> ComposeResult:
@@ -101,6 +113,8 @@ class ResultScreen(ModalScreen):
                     yield Static(id="stats-content")
                 with TabPane("Leaderboard", id="tab-leaderboard"):
                     yield Static(id="leaderboard-content")
+                with TabPane("Settings", id="tab-settings"):
+                    yield Static(id="settings-content")
             yield Static(id="footer-nav")
 
     def on_mount(self) -> None:
@@ -108,6 +122,7 @@ class ResultScreen(ModalScreen):
         self._render_result()
         self._render_stats()
         self._render_leaderboard()
+        self._render_settings()
         self._render_footer()
         # Fetch real leaderboard data
         asyncio.create_task(self._fetch_leaderboard())
@@ -282,10 +297,38 @@ class ResultScreen(ModalScreen):
 
         content.update(Text.from_markup("\n".join(lines)))
 
+    def _render_settings(self) -> None:
+        content = self.query_one("#settings-content", Static)
+        username = self.result_data.get("username", "Player")
+
+        lines = [
+            "[bold white]Settings[/]",
+            "",
+            f"[#818384]Username[/]    [bold white]{username}[/]",
+        ]
+
+        if self.email:
+            lines.append(f"[#818384]Email[/]       [white]{self.email}[/]")
+
+        if self.token:
+            lines.extend([
+                "",
+                "[#818384]─────────────────────────────────[/]",
+                "",
+                "[#c9b458]Press L to logout[/]",
+            ])
+        else:
+            lines.extend([
+                "",
+                "[#818384]Playing offline[/]",
+            ])
+
+        content.update(Text.from_markup("\n".join(lines)))
+
     def _render_footer(self) -> None:
         footer = self.query_one("#footer-nav", Static)
         footer.update(Text.from_markup(
-            "[#565758]← → or 1/2/3: Switch tabs  |  ENTER: Exit[/]"
+            "[#565758]← → or 1/2/3/4: Switch tabs  |  ENTER: Exit[/]"
         ))
 
     def action_close(self) -> None:
@@ -305,14 +348,26 @@ class ResultScreen(ModalScreen):
 
     def action_prev_tab(self) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
-        tab_order = ["tab-result", "tab-stats", "tab-leaderboard"]
+        tab_order = ["tab-result", "tab-stats", "tab-leaderboard", "tab-settings"]
         current_idx = tab_order.index(tabs.active) if tabs.active in tab_order else 0
         new_idx = (current_idx - 1) % len(tab_order)
         tabs.active = tab_order[new_idx]
 
     def action_next_tab(self) -> None:
         tabs = self.query_one("#tabs", TabbedContent)
-        tab_order = ["tab-result", "tab-stats", "tab-leaderboard"]
+        tab_order = ["tab-result", "tab-stats", "tab-leaderboard", "tab-settings"]
         current_idx = tab_order.index(tabs.active) if tabs.active in tab_order else 0
         new_idx = (current_idx + 1) % len(tab_order)
         tabs.active = tab_order[new_idx]
+
+    def action_tab_settings(self) -> None:
+        tabs = self.query_one("#tabs", TabbedContent)
+        tabs.active = "tab-settings"
+
+    def action_logout(self) -> None:
+        """Logout and exit."""
+        if self.token:
+            from client.config import ClientConfig
+            config = ClientConfig()
+            config.clear()
+            self.app.exit()
