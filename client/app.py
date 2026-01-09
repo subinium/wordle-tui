@@ -41,7 +41,7 @@ def get_local_word() -> str:
 
 async def get_server_word_and_progress(token: str) -> dict:
     """Get today's word and any saved progress from SERVER."""
-    result = {"word": None, "word_id": 0, "guesses": [], "elapsed_seconds": 0}
+    result = {"word": None, "word_id": 0, "guesses": [], "elapsed_seconds": 0, "auth_failed": False}
     try:
         client = get_api_client(API_URL)
         client.session = type('Session', (), {'token': token})()
@@ -52,6 +52,12 @@ async def get_server_word_and_progress(token: str) -> dict:
             f"{API_URL}/words/today",
             headers=headers,
         )
+
+        # Check for auth failure (deleted user, invalid token)
+        if response.status_code == 401:
+            result["auth_failed"] = True
+            return result
+
         if response.status_code == 200:
             data = response.json()
             result["word"] = data.get("word")
@@ -138,6 +144,15 @@ class WordleApp(App):
     async def _fetch_server_word_and_start(self) -> None:
         """Fetch word from server and start game."""
         server_data = await get_server_word_and_progress(self.user_token)
+
+        # Handle auth failure (deleted user, invalid token)
+        if server_data.get("auth_failed"):
+            self._config.clear()
+            self.user_token = None
+            self.username = "Player"
+            # Show login screen
+            self.push_screen(LoginScreen(api_url=API_URL), self._on_login)
+            return
 
         if server_data.get("word"):
             self.target_word = server_data["word"].upper()
