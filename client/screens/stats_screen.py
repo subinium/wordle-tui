@@ -1,6 +1,5 @@
 """Statistics screen showing personal and global stats."""
 
-from datetime import date, timedelta
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Static
@@ -161,36 +160,8 @@ class StatsScreen(ModalScreen):
     def _render_contribution_graph(self) -> None:
         """Set up the contribution graph with game history."""
         graph = self.query_one("#contribution-graph", ContributionGraph)
-
         game_history = self.stats.get("game_history", [])
-
-        # If no history, generate demo data for visualization
-        if not game_history:
-            game_history = self._generate_demo_history()
-
         graph.set_data(game_history)
-
-    def _generate_demo_history(self) -> list[dict]:
-        """Generate demo game history for visualization."""
-        import random
-        history = []
-        today = date.today()
-
-        # Generate some random past games for demo
-        for i in range(60):
-            game_date = today - timedelta(days=i)
-            # 70% chance of playing on any given day
-            if random.random() < 0.7:
-                # 85% win rate
-                solved = random.random() < 0.85
-                attempts = random.randint(2, 6) if solved else 6
-                history.append({
-                    "date": game_date.isoformat(),
-                    "solved": solved,
-                    "attempts": attempts,
-                })
-
-        return history
 
     def action_dismiss(self) -> None:
         self.app.pop_screen()

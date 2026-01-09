@@ -1,6 +1,6 @@
 from datetime import date
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, extract
+from sqlalchemy import select, func, extract, Integer
 from server.games.models import GameResult
 from server.words.models import DailyWord
 from server.streaks.models import UserStreak
@@ -121,8 +121,6 @@ async def get_monthly_stats(db: AsyncSession, user_id: int) -> list[dict]:
         .group_by("year", "month")
         .order_by("year", "month")
     )
-
-    from sqlalchemy import Integer
 
     data = []
     for row in result.all():
