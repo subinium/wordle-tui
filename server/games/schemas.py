@@ -36,3 +36,17 @@ class GameHistoryItem(BaseModel):
 class TodayGameResponse(BaseModel):
     played: bool
     result: Optional[GameHistoryItem] = None
+
+
+# Game Progress (auto-save)
+class SaveProgressRequest(BaseModel):
+    word_id: int
+    guesses: list[str] = Field(default_factory=list, max_length=6)
+    elapsed_seconds: int = Field(0, ge=0)
+
+
+class ProgressResponse(BaseModel):
+    word_id: int
+    guesses: list[str]
+    elapsed_seconds: int
+    has_progress: bool = True

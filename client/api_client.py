@@ -97,6 +97,7 @@ class WordleAPIClient:
 
     async def submit_game(
         self,
+        word_id: int,
         attempts: int,
         solved: bool,
         time_seconds: int,
@@ -108,11 +109,49 @@ class WordleAPIClient:
                 f"{self.base_url}/games/submit",
                 headers=self.headers,
                 json={
+                    "word_id": word_id,
                     "attempts": attempts,
                     "solved": solved,
                     "time_seconds": time_seconds,
                     "guess_history": guess_history,
                 },
+            )
+            if response.status_code == 200:
+                return response.json()
+        except Exception:
+            pass
+        return None
+
+    # Progress (auto-save) endpoints
+    async def save_progress(
+        self,
+        word_id: int,
+        guesses: list[str],
+        elapsed_seconds: int,
+    ) -> bool:
+        """Save game progress (auto-save)."""
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/games/progress",
+                headers=self.headers,
+                json={
+                    "word_id": word_id,
+                    "guesses": guesses,
+                    "elapsed_seconds": elapsed_seconds,
+                },
+            )
+            if response.status_code == 200:
+                return response.json().get("saved", False)
+        except Exception:
+            pass
+        return False
+
+    async def get_today_progress(self) -> Optional[dict]:
+        """Get today's saved progress if exists."""
+        try:
+            response = await self._client.get(
+                f"{self.base_url}/games/progress/today",
+                headers=self.headers,
             )
             if response.status_code == 200:
                 return response.json()

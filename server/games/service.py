@@ -1,8 +1,8 @@
 from datetime import date
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from server.games.models import GameResult
+from sqlalchemy import select, func, delete
+from server.games.models import GameResult, GameProgress
 from server.words.models import DailyWord
 from server.streaks.service import update_streak
 
@@ -25,6 +25,15 @@ async def submit_game(
         guess_history=guess_history,
     )
     db.add(game)
+
+    # Clear any saved progress for this game
+    await db.execute(
+        delete(GameProgress).where(
+            GameProgress.user_id == user_id,
+            GameProgress.word_id == word_id,
+        )
+    )
+
     await db.commit()
     await db.refresh(game)
 

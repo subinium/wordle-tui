@@ -1,9 +1,11 @@
 """Admin API endpoints - protected by admin email list."""
 
+import hmac
 from datetime import date, timedelta
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional
@@ -17,6 +19,8 @@ from server.words.models import DailyWord
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+# Dist folder for Vue build, fallback to static for old HTML
+DIST_DIR = Path(__file__).parent / "dist"
 STATIC_DIR = Path(__file__).parent / "static"
 
 
@@ -59,7 +63,8 @@ async def verify_admin_token(
 def verify_admin_key(x_admin_key: str = Header(None)):
     """Verify admin secret key (legacy, for API access)."""
     settings = get_settings()
-    if not x_admin_key or x_admin_key != settings.admin_secret_key:
+    # SECURITY: Use constant-time comparison to prevent timing attacks
+    if not x_admin_key or not hmac.compare_digest(x_admin_key, settings.admin_secret_key):
         raise HTTPException(status_code=403, detail="Invalid admin key")
     return True
 
@@ -73,7 +78,8 @@ async def verify_admin(
     # Try X-Admin-Key first (for CLI/curl access)
     if x_admin_key:
         settings = get_settings()
-        if x_admin_key == settings.admin_secret_key:
+        # SECURITY: Use constant-time comparison to prevent timing attacks
+        if hmac.compare_digest(x_admin_key, settings.admin_secret_key):
             return True
 
     # Try JWT token (for dashboard access)
@@ -93,13 +99,7 @@ async def verify_admin(
     raise HTTPException(status_code=403, detail="Admin access required")
 
 
-@router.get("/dashboard")
-async def dashboard():
-    """Serve admin dashboard HTML."""
-    html_file = STATIC_DIR / "dashboard.html"
-    if html_file.exists():
-        return FileResponse(html_file, media_type="text/html")
-    raise HTTPException(status_code=404, detail="Dashboard not found")
+# SPA routes are defined at the end of file to avoid catching API routes
 
 
 @router.get("/me")
@@ -168,8 +168,8 @@ async def get_overall_stats(
 
 @router.get("/users")
 async def get_users(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     _=Depends(verify_admin),
 ):
@@ -201,7 +201,7 @@ async def get_users(
 
 @router.get("/leaderboard")
 async def get_full_leaderboard(
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     _=Depends(verify_admin),
 ):
@@ -226,6 +226,50 @@ async def get_full_leaderboard(
         })
 
     return {"leaderboard": leaderboard}
+
+
+@router.get("/leaderboard/today")
+async def get_today_leaderboard(
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    """Get today's leaderboard based on today's game results."""
+    today = date.today()
+    today_word = await db.scalar(select(DailyWord).where(DailyWord.date == today))
+
+    if not today_word:
+        return {"leaderboard": [], "date": today.isoformat(), "word": None}
+
+    # Get today's game results, sorted by: solved first, then attempts (asc), then time (asc)
+    result = await db.execute(
+        select(GameResult, User)
+        .join(User, GameResult.user_id == User.id)
+        .where(GameResult.word_id == today_word.id)
+        .order_by(
+            GameResult.solved.desc(),  # Solved first
+            GameResult.attempts.asc(),  # Fewer attempts better
+            GameResult.time_seconds.asc().nullslast(),  # Faster time better
+        )
+        .limit(limit)
+    )
+
+    leaderboard = []
+    for rank, (game, user) in enumerate(result.all(), 1):
+        leaderboard.append({
+            "rank": rank,
+            "username": user.username,
+            "solved": game.solved,
+            "attempts": game.attempts,
+            "time_seconds": game.time_seconds,
+            "completed_at": game.completed_at.isoformat() if game.completed_at else None,
+        })
+
+    return {
+        "leaderboard": leaderboard,
+        "date": today.isoformat(),
+        "word": today_word.word,
+    }
 
 
 @router.get("/users/{user_id}")
@@ -341,3 +385,210 @@ async def get_daily_stats(
         "avg_attempts": round(avg_attempts, 2) if avg_attempts else 0,
         "distribution": distribution,
     }
+
+
+# ==================== Word Management ====================
+
+@router.get("/words")
+async def get_words(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    """Get list of daily words with optional filtering."""
+    query = select(DailyWord).order_by(DailyWord.date.desc())
+
+    if year:
+        from sqlalchemy import extract
+        query = query.where(extract('year', DailyWord.date) == year)
+        if month:
+            query = query.where(extract('month', DailyWord.date) == month)
+
+    query = query.limit(limit).offset(offset)
+    result = await db.execute(query)
+    words = result.scalars().all()
+
+    # Get total count
+    count_query = select(func.count(DailyWord.id))
+    if year:
+        from sqlalchemy import extract
+        count_query = count_query.where(extract('year', DailyWord.date) == year)
+        if month:
+            count_query = count_query.where(extract('month', DailyWord.date) == month)
+    total = await db.scalar(count_query)
+
+    return {
+        "words": [
+            {
+                "id": w.id,
+                "date": w.date.isoformat(),
+                "word": w.word,
+                "difficulty_rank": w.difficulty_rank,
+            }
+            for w in words
+        ],
+        "total": total or 0,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/words/{target_date}")
+async def get_word_by_date(
+    target_date: date,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    """Get word for a specific date."""
+    word = await db.scalar(select(DailyWord).where(DailyWord.date == target_date))
+
+    if not word:
+        raise HTTPException(status_code=404, detail="No word found for this date")
+
+    # Get game stats for this word
+    total_games = await db.scalar(
+        select(func.count(GameResult.id)).where(GameResult.word_id == word.id)
+    )
+
+    return {
+        "id": word.id,
+        "date": word.date.isoformat(),
+        "word": word.word,
+        "difficulty_rank": word.difficulty_rank,
+        "games_played": total_games or 0,
+    }
+
+
+@router.put("/words/{target_date}")
+async def update_word(
+    target_date: date,
+    word: str,
+    difficulty_rank: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    """Update word for a specific date."""
+    word = word.upper().strip()
+
+    if len(word) != 5:
+        raise HTTPException(status_code=400, detail="Word must be exactly 5 characters")
+
+    if not word.isalpha():
+        raise HTTPException(status_code=400, detail="Word must contain only letters")
+
+    existing = await db.scalar(select(DailyWord).where(DailyWord.date == target_date))
+
+    if existing:
+        existing.word = word
+        if difficulty_rank is not None:
+            existing.difficulty_rank = difficulty_rank
+        await db.commit()
+        return {
+            "id": existing.id,
+            "date": existing.date.isoformat(),
+            "word": existing.word,
+            "difficulty_rank": existing.difficulty_rank,
+            "updated": True,
+        }
+    else:
+        # Create new word
+        new_word = DailyWord(
+            date=target_date,
+            word=word,
+            difficulty_rank=difficulty_rank or 5,
+        )
+        db.add(new_word)
+        await db.commit()
+        await db.refresh(new_word)
+        return {
+            "id": new_word.id,
+            "date": new_word.date.isoformat(),
+            "word": new_word.word,
+            "difficulty_rank": new_word.difficulty_rank,
+            "created": True,
+        }
+
+
+@router.post("/words/bulk")
+async def bulk_upload_words(
+    words: list[dict],
+    db: AsyncSession = Depends(get_db),
+    _=Depends(verify_admin),
+):
+    """Bulk upload words from JSON (e.g., words_2026.json format)."""
+    created = 0
+    updated = 0
+    errors = []
+
+    for item in words:
+        try:
+            word_date = date.fromisoformat(item["date"])
+            word = item["word"].upper().strip()
+
+            if len(word) != 5 or not word.isalpha():
+                errors.append(f"Invalid word for {item['date']}: {item['word']}")
+                continue
+
+            existing = await db.scalar(
+                select(DailyWord).where(DailyWord.date == word_date)
+            )
+
+            if existing:
+                existing.word = word
+                updated += 1
+            else:
+                new_word = DailyWord(date=word_date, word=word)
+                db.add(new_word)
+                created += 1
+        except Exception as e:
+            errors.append(f"Error processing {item}: {str(e)}")
+
+    await db.commit()
+
+    return {
+        "created": created,
+        "updated": updated,
+        "errors": errors,
+    }
+
+
+# ==================== SPA Serving (MUST BE LAST) ====================
+# These catch-all routes serve the Vue SPA, placed last to not interfere with API routes
+
+@router.get("/")
+async def serve_admin_index():
+    """Serve admin SPA index."""
+    if DIST_DIR.exists():
+        index_file = DIST_DIR / "index.html"
+        if index_file.exists():
+            return FileResponse(index_file, media_type="text/html")
+
+    # Fallback to old static dashboard
+    html_file = STATIC_DIR / "dashboard.html"
+    if html_file.exists():
+        return FileResponse(html_file, media_type="text/html")
+
+    raise HTTPException(status_code=404, detail="Dashboard not found")
+
+
+@router.get("/assets/{file_path:path}")
+async def serve_admin_assets(file_path: str):
+    """Serve SPA static assets."""
+    if DIST_DIR.exists():
+        asset_path = DIST_DIR / "assets" / file_path
+        if asset_path.exists():
+            return FileResponse(asset_path)
+    raise HTTPException(status_code=404, detail="Asset not found")
+
+
+@router.get("/favicon.svg")
+async def serve_favicon():
+    """Serve favicon."""
+    if DIST_DIR.exists():
+        favicon = DIST_DIR / "favicon.svg"
+        if favicon.exists():
+            return FileResponse(favicon, media_type="image/svg+xml")
+    raise HTTPException(status_code=404)

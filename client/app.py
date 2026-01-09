@@ -38,23 +38,40 @@ def get_local_word() -> str:
     return words[day_of_year % len(words)]["word"] if words else "CRANE"
 
 
-async def get_server_word(token: str) -> str | None:
-    """Get today's word from SERVER (logged-in mode)."""
+async def get_server_word_and_progress(token: str) -> dict:
+    """Get today's word and any saved progress from SERVER."""
+    result = {"word": None, "word_id": 0, "guesses": [], "elapsed_seconds": 0}
     try:
         client = get_api_client(API_URL)
         client.session = type('Session', (), {'token': token})()
+        headers = {"Authorization": f"Bearer {token}"}
 
+        # Fetch today's word
         response = await client._client.get(
             f"{API_URL}/words/today",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
         )
-
         if response.status_code == 200:
             data = response.json()
-            return data.get("word")
+            result["word"] = data.get("word")
+            result["word_id"] = data.get("word_id", 0)
+
+        # Fetch any saved progress
+        progress_response = await client._client.get(
+            f"{API_URL}/games/progress/today",
+            headers=headers,
+        )
+        if progress_response.status_code == 200:
+            progress_data = progress_response.json()
+            if progress_data.get("has_progress"):
+                result["guesses"] = progress_data.get("guesses", [])
+                result["elapsed_seconds"] = progress_data.get("elapsed_seconds", 0)
+            elif progress_data.get("completed"):
+                # Game already completed
+                result["completed"] = True
     except Exception:
         pass
-    return None
+    return result
 
 
 class WordleApp(App):
@@ -77,10 +94,15 @@ class WordleApp(App):
         super().__init__()
         self.skip_login = skip_login
         self.username = "Player"
+        self.user_email = ""
         self.user_token = None
         self.streak = 0
         self.target_word = None  # Will be set based on login status
+        self.word_id = 0
+        self.saved_guesses: list[str] = []
+        self.saved_elapsed = 0
         self._config = ClientConfig()
+        self.api_url = API_URL
 
     def on_mount(self) -> None:
         if self.skip_login:
@@ -99,6 +121,7 @@ class WordleApp(App):
     def _on_login(self, result: dict) -> None:
         """Handle login result."""
         self.username = result.get("username", "Player")
+        self.user_email = result.get("email", "")
         self.user_token = result.get("token")
         self.streak = result.get("streak", 0)
 
@@ -112,10 +135,13 @@ class WordleApp(App):
 
     async def _fetch_server_word_and_start(self) -> None:
         """Fetch word from server and start game."""
-        server_word = await get_server_word(self.user_token)
+        server_data = await get_server_word_and_progress(self.user_token)
 
-        if server_word:
-            self.target_word = server_word.upper()
+        if server_data.get("word"):
+            self.target_word = server_data["word"].upper()
+            self.word_id = server_data.get("word_id", 0)
+            self.saved_guesses = server_data.get("guesses", [])
+            self.saved_elapsed = server_data.get("elapsed_seconds", 0)
         else:
             # Fallback to local if server fails
             self.target_word = get_local_word()
@@ -131,6 +157,12 @@ class WordleApp(App):
             target_word=self.target_word,
             username=self.username,
             streak=self.streak,
+            token=self.user_token or "",
+            email=self.user_email,
+            api_url=self.api_url,
+            word_id=self.word_id,
+            saved_guesses=self.saved_guesses,
+            saved_elapsed=self.saved_elapsed,
         ))
 
 

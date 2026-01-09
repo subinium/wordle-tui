@@ -10,6 +10,8 @@ env/
 *.egg-info/
 dist/
 build/
+# Keep server/admin/dist for Vue build output
+!server/admin/dist/
 *.egg
 
 # Environment

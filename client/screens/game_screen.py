@@ -21,6 +21,7 @@ from client.screens.stats_screen import StatsScreen
 from client.screens.leaderboard_screen import LeaderboardScreen
 from client.screens.result_screen import ResultScreen
 from client.screens.help_screen import HelpScreen
+from client.screens.settings_screen import SettingsScreen
 
 
 # Load valid words once
@@ -143,6 +144,7 @@ class GameScreen(Screen):
         Binding("f2", "leaderboard", "F2:Leaderboard"),
         Binding("ctrl+l", "leaderboard", "Leaderboard", show=False),
         Binding("f3", "help", "F3:Help"),
+        Binding("f4", "settings", "F4:Settings"),
     ]
 
     CSS = """
@@ -196,16 +198,34 @@ class GameScreen(Screen):
     }
     """
 
-    def __init__(self, target_word: str = "CRANE", username: str = "", streak: int = 0) -> None:
+    def __init__(
+        self,
+        target_word: str = "CRANE",
+        username: str = "",
+        streak: int = 0,
+        token: str = "",
+        email: str = "",
+        api_url: str = "",
+        word_id: int = 0,
+        saved_guesses: list[str] | None = None,
+        saved_elapsed: int = 0,
+    ) -> None:
         super().__init__()
         self.target_word = target_word.upper()
         self.username = username
         self.streak = streak
+        self.token = token
+        self.email = email
+        self.api_url = api_url
+        self.word_id = word_id
+        self.saved_guesses = saved_guesses or []
+        self.saved_elapsed = saved_elapsed
         self.game_over = False
         self.won = False
         self.start_time = time.time()
-        self.elapsed_seconds = 0
+        self.elapsed_seconds = saved_elapsed
         self._timer_task = None
+        self._api_client = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="game-container"):
@@ -213,7 +233,7 @@ class GameScreen(Screen):
             yield Container(id="board-area")
             yield GameMessage(id="message")
             yield Container(id="keyboard-area")
-            yield Static("[#565758]ESC: Quit  |  F1: Stats  |  F2: Leaderboard  |  F3: Help[/]", id="footer-hint")
+            yield Static("[#565758]ESC: Quit | F1: Stats | F2: Leaderboard | F3: Help | F4: Settings[/]", id="footer-hint")
 
     def on_mount(self) -> None:
         header = self.query_one("#header", GameHeader)
@@ -228,9 +248,35 @@ class GameScreen(Screen):
         self.keyboard = Keyboard()
         keyboard_area.mount(self.keyboard)
 
-        # Start timer
-        self.start_time = time.time()
+        # Initialize API client for auto-save
+        if self.token and self.api_url:
+            from client.api_client import WordleAPIClient, UserSession
+            self._api_client = WordleAPIClient(self.api_url)
+            self._api_client.session = UserSession(
+                user_id=0,
+                username=self.username,
+                token=self.token,
+            )
+
+        # Restore saved guesses if any
+        if self.saved_guesses:
+            asyncio.create_task(self._restore_saved_guesses())
+
+        # Start timer (account for saved elapsed time)
+        self.start_time = time.time() - self.saved_elapsed
         self._timer_task = asyncio.create_task(self._run_timer())
+
+    async def _restore_saved_guesses(self) -> None:
+        """Restore previously saved guesses."""
+        for guess in self.saved_guesses:
+            for letter in guess:
+                self.board.add_letter(letter)
+            won, feedback = await self.board.submit_guess()
+            self.keyboard.update_from_guess(guess, feedback)
+            if won:
+                self.game_over = True
+                self.won = True
+                return
 
     async def _run_timer(self) -> None:
         """Update timer every second."""
@@ -283,6 +329,22 @@ class GameScreen(Screen):
         elif self.board.current_row >= 6:
             self.game_over = True
             self._show_result_screen(won=False, attempts=6)
+        else:
+            # Auto-save progress after each guess (only if not game over)
+            asyncio.create_task(self._auto_save_progress())
+
+    async def _auto_save_progress(self) -> None:
+        """Save current game progress to server."""
+        if not self._api_client or not self.word_id:
+            return
+        try:
+            await self._api_client.save_progress(
+                word_id=self.word_id,
+                guesses=self.board.guesses,
+                elapsed_seconds=self.elapsed_seconds,
+            )
+        except Exception:
+            pass  # Silently fail - auto-save is best effort
 
     def _show_message(self, message: str, color: str) -> None:
         msg = self.query_one("#message", GameMessage)
@@ -337,6 +399,31 @@ class GameScreen(Screen):
 
     def action_help(self) -> None:
         self.app.push_screen(HelpScreen())
+
+    def action_settings(self) -> None:
+        """Open settings screen."""
+        self.app.push_screen(
+            SettingsScreen(
+                username=self.username,
+                email=self.email,
+                token=self.token,
+                api_url=self.api_url,
+            ),
+            self._on_settings_result,
+        )
+
+    def _on_settings_result(self, result: dict | None) -> None:
+        """Handle settings screen result."""
+        if result is None:
+            return
+
+        if result.get("action") == "logout":
+            self.app.exit()
+        elif result.get("action") == "updated":
+            # Update username in header
+            self.username = result.get("username", self.username)
+            header = self.query_one("#header", GameHeader)
+            header.set_info(self.username, self.streak)
 
     def _get_local_distribution(self) -> dict:
         """Get local game distribution."""
