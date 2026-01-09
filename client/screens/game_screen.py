@@ -324,11 +324,12 @@ class GameScreen(Screen):
             attempts = len(self.board.guesses)
             # Bounce animation for win
             await self.board.bounce_row(attempts - 1)
-            # Show result screen
-            self._show_result_screen(won=True, attempts=attempts)
+            # Submit result to server and show result screen
+            await self._submit_and_show_result(won=True, attempts=attempts)
         elif self.board.current_row >= 6:
             self.game_over = True
-            self._show_result_screen(won=False, attempts=6)
+            # Submit result to server and show result screen
+            await self._submit_and_show_result(won=False, attempts=6)
         else:
             # Auto-save progress after each guess (only if not game over)
             asyncio.create_task(self._auto_save_progress())
@@ -346,12 +347,47 @@ class GameScreen(Screen):
         except Exception:
             pass  # Silently fail - auto-save is best effort
 
+    async def _submit_and_show_result(self, won: bool, attempts: int) -> None:
+        """Submit game result to server and show result screen."""
+        rank = 0
+        server_streak = {"current": self.streak, "longest": self.streak}
+
+        # Submit to server
+        if self._api_client and self.word_id:
+            try:
+                result = await self._api_client.submit_game(
+                    word_id=self.word_id,
+                    attempts=attempts,
+                    solved=won,
+                    time_seconds=self.elapsed_seconds,
+                    guess_history=self.board.guesses,
+                )
+                if result:
+                    rank = result.get("rank", 0)
+                    streak_data = result.get("streak", {})
+                    server_streak = {
+                        "current": streak_data.get("current", self.streak),
+                        "longest": streak_data.get("longest", self.streak),
+                    }
+            except Exception:
+                pass  # Show result anyway even if submit fails
+
+        self._show_result_screen(won=won, attempts=attempts, rank=rank, streak=server_streak)
+
     def _show_message(self, message: str, color: str) -> None:
         msg = self.query_one("#message", GameMessage)
         msg.show(message, color)
 
-    def _show_result_screen(self, won: bool, attempts: int) -> None:
+    def _show_result_screen(
+        self,
+        won: bool,
+        attempts: int,
+        rank: int = 0,
+        streak: dict | None = None,
+    ) -> None:
         """Show result screen with stats."""
+        streak = streak or {"current": self.streak, "longest": self.streak}
+
         result_data = {
             "won": won,
             "attempts": attempts,
@@ -359,23 +395,19 @@ class GameScreen(Screen):
             "time_seconds": self.elapsed_seconds,
             "guesses": self.board.guesses,
             "username": self.username,
+            "rank": rank,
             "personal_stats": {
                 "total_games": 1,
                 "total_wins": 1 if won else 0,
                 "win_rate": 100.0 if won else 0.0,
-                "current_streak": self.streak + 1 if won else 0,
-                "longest_streak": self.streak + 1 if won else self.streak,
+                "current_streak": streak.get("current", 0),
+                "longest_streak": streak.get("longest", 0),
                 "avg_attempts": attempts if won else 0,
                 "attempts_distribution": self._get_local_distribution(),
             },
-            "global_stats": {
-                "total_players": 1234,
-                "total_solved": 1089,
-                "solve_rate": 88.3,
-                "avg_attempts": 3.8,
-            },
+            "global_stats": {},
         }
-        self.app.push_screen(ResultScreen(result_data))
+        self.app.push_screen(ResultScreen(result_data, api_url=self.api_url))
 
     def action_quit(self) -> None:
         self.app.exit()

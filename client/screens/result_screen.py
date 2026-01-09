@@ -1,11 +1,14 @@
 """Result screen shown after game ends with tabbed navigation."""
 
+import asyncio
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Static, TabbedContent, TabPane
 from textual.containers import Container, Vertical
 from textual.binding import Binding
 from rich.text import Text
+
+from client.api_client import get_api_client
 
 
 class ResultScreen(ModalScreen):
@@ -82,9 +85,11 @@ class ResultScreen(ModalScreen):
     }
     """
 
-    def __init__(self, result_data: dict, **kwargs) -> None:
+    def __init__(self, result_data: dict, api_url: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
         self.result_data = result_data
+        self.api_url = api_url
+        self.leaderboard_entries = []
 
     def compose(self) -> ComposeResult:
         with Container(id="result-container"):
@@ -104,6 +109,8 @@ class ResultScreen(ModalScreen):
         self._render_stats()
         self._render_leaderboard()
         self._render_footer()
+        # Fetch real leaderboard data
+        asyncio.create_task(self._fetch_leaderboard())
 
     def _render_header(self) -> None:
         header = self.query_one("#result-header", Static)
@@ -159,6 +166,11 @@ class ResultScreen(ModalScreen):
 
         if streak > 0:
             lines.append(f"[#818384]Streak:[/] [bold #ff6b35]🔥 {streak} days[/]")
+
+        # Show rank if available
+        rank = self.result_data.get("rank", 0)
+        if rank > 0 and won:
+            lines.append(f"[#818384]Rank:[/] [bold #ffd700]#{rank}[/] [#818384]today[/]")
         lines.append("")
 
         # Guess history
@@ -210,53 +222,63 @@ class ResultScreen(ModalScreen):
 
         content.update(Text.from_markup("\n".join(lines)))
 
+    async def _fetch_leaderboard(self) -> None:
+        """Fetch real leaderboard data from API."""
+        if not self.api_url:
+            return
+
+        try:
+            client = get_api_client(self.api_url)
+            data = await client.get_leaderboard(limit=10)
+            if data:
+                self.leaderboard_entries = data
+                self._render_leaderboard()
+        except Exception:
+            pass
+
     def _render_leaderboard(self) -> None:
         content = self.query_one("#leaderboard-content", Static)
-        global_stats = self.result_data.get("global_stats", {})
 
-        # Demo leaderboard data (will be from API later)
-        entries = [
-            {"rank": 1, "username": "player1", "attempts": 2, "time": "0:45"},
-            {"rank": 2, "username": "player2", "attempts": 3, "time": "1:02"},
-            {"rank": 3, "username": "player3", "attempts": 3, "time": "1:29"},
-            {"rank": 4, "username": "player4", "attempts": 4, "time": "2:00"},
-            {"rank": 5, "username": "player5", "attempts": 4, "time": "2:36"},
-        ]
-
-        total = global_stats.get("total_players", 1234)
-        solved = global_stats.get("total_solved", 1089)
-        rate = global_stats.get("solve_rate", 88.3)
-        avg = global_stats.get("avg_attempts", 3.8)
+        entries = self.leaderboard_entries
 
         lines = [
             "[bold white]Today's Leaderboard[/]",
             "",
-            f"[#818384]Players[/] [bold white]{total:,}[/]  [#818384]Solved[/] [bold #6aaa64]{solved:,}[/]  [#818384]Rate[/] [bold white]{rate:.0f}%[/]",
-            "",
-            "[#818384]Rank  Player          Tries  Time[/]",
-            "[#3a3a3c]─────────────────────────────────[/]",
         ]
 
-        for entry in entries:
-            rank = entry["rank"]
-            if rank == 1:
-                rank_str = "[#ffd700]🥇 1[/]"
-            elif rank == 2:
-                rank_str = "[#c0c0c0]🥈 2[/]"
-            elif rank == 3:
-                rank_str = "[#cd7f32]🥉 3[/]"
-            else:
-                rank_str = f"[#818384]   {rank}[/]"
+        if not entries:
+            lines.append("[#818384]No entries yet. Be the first![/]")
+        else:
+            lines.append("[#818384]Rank  Player          Tries  Time[/]")
+            lines.append("[#3a3a3c]─────────────────────────────────[/]")
 
-            username = entry["username"][:12]
-            attempts = entry["attempts"]
-            time_str = entry["time"]
+            for i, entry in enumerate(entries[:10], 1):
+                rank = i
+                if rank == 1:
+                    rank_str = "[#ffd700]🥇 1[/]"
+                elif rank == 2:
+                    rank_str = "[#c0c0c0]🥈 2[/]"
+                elif rank == 3:
+                    rank_str = "[#cd7f32]🥉 3[/]"
+                else:
+                    rank_str = f"[#818384]   {rank}[/]"
 
-            attempts_color = "#6aaa64" if attempts <= 3 else "#c9b458" if attempts <= 4 else "#787c7e"
+                username = entry.get("username", "???")[:12]
+                attempts = entry.get("attempts", 0)
+                time_sec = entry.get("time_seconds")
 
-            lines.append(
-                f"{rank_str}  [white]{username:<12}[/]  [{attempts_color}]{attempts}[/]     [#818384]{time_str}[/]"
-            )
+                if time_sec:
+                    mins = time_sec // 60
+                    secs = time_sec % 60
+                    time_str = f"{mins}:{secs:02d}"
+                else:
+                    time_str = "-:--"
+
+                attempts_color = "#6aaa64" if attempts <= 3 else "#c9b458" if attempts <= 4 else "#787c7e"
+
+                lines.append(
+                    f"{rank_str}  [white]{username:<12}[/]  [{attempts_color}]{attempts}[/]     [#818384]{time_str}[/]"
+                )
 
         content.update(Text.from_markup("\n".join(lines)))
 

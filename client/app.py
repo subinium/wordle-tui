@@ -179,7 +179,7 @@ class WordleApp(App):
             },
             "global_stats": {},
         }
-        self.push_screen(ResultScreen(result_data))
+        self.push_screen(ResultScreen(result_data, api_url=self.api_url))
 
     def _start_game(self) -> None:
         """Start the game screen."""
