@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-CONFIG_DIR = Path.home() / ".wordle-tui"
+CONFIG_DIR = Path.home() / ".tui-wordle"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 

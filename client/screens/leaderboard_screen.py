@@ -80,17 +80,7 @@ class LeaderboardScreen(ModalScreen):
 
     def __init__(self, entries: list | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.entries = entries or self._get_demo_entries()
-
-    def _get_demo_entries(self) -> list:
-        """Return demo leaderboard when not connected to server."""
-        return [
-            {"rank": 1, "username": "player1", "attempts": 2, "time_seconds": 45},
-            {"rank": 2, "username": "player2", "attempts": 3, "time_seconds": 62},
-            {"rank": 3, "username": "player3", "attempts": 3, "time_seconds": 89},
-            {"rank": 4, "username": "player4", "attempts": 4, "time_seconds": 120},
-            {"rank": 5, "username": "player5", "attempts": 4, "time_seconds": 156},
-        ]
+        self.entries = entries or []
 
     def compose(self) -> ComposeResult:
         with Container(id="leaderboard-container"):
